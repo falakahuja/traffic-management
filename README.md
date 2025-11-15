@@ -67,6 +67,13 @@ pip install matplotlib
 ```
 
 Run the Python File
+
+To train the NEAT model:
+```
+python simulation.py --train
+```
+
+To run the simulation:
 ```
 python simulation.py
 ```
@@ -123,3 +130,4 @@ https://user-images.githubusercontent.com/83399207/166124009-7ae31ef1-dd3f-4070-
 - Using the AI model adds an additional functionality to reduce the waiting time of vehicles at their next crossing.
 - Both of these can be implemented using edge computing at the traffic signal itself.
 - It can be implemented with effectively with very little cost.   
+
