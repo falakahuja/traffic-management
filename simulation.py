@@ -86,7 +86,6 @@ rotationAngle = 3
 gap = 7    # stopping gap
 gap2 = 7   # moving gap
 
-pygame.init()
 simulation = pygame.sprite.Group()
 
 class TrafficSignal:
@@ -281,48 +280,54 @@ def initialize():
 def setTime():
     global noOfCars, noOfBikes, noOfBuses, noOfTrucks, noOfRickshaws, noOfLanes
     global carTime, busTime, truckTime, rickshawTime, bikeTime
-    os.system("say detecting vehicles, "+directionNumbers[(currentGreen+1)%noOfSignals])
-#    detection_result=detection(currentGreen,tfnet)
-#    greenTime = math.ceil(((noOfCars*carTime) + (noOfRickshaws*rickshawTime) + (noOfBuses*busTime) + (noOfBikes*bikeTime))/(noOfLanes+1))
-#    if(greenTime<defaultMinimum):
-#       greenTime = defaultMinimum
-#    elif(greenTime>defaultMaximum):
-#       greenTime = defaultMaximum
-#     greenTime = len(vehicles[currentGreen][0])+len(vehicles[currentGreen][1])+len(vehicles[currentGreen][2])
-#     noOfVehicles = len(vehicles[directionNumbers[nextGreen]][1])+len(vehicles[directionNumbers[nextGreen]][2])-vehicles[directionNumbers[nextGreen]]['crossed']
-#     print("no. of vehicles = ",noOfVehicles)
-    noOfCars, noOfBuses, noOfTrucks, noOfRickshaws, noOfBikes = 0,0,0,0,0
-    for j in range(len(vehicles[directionNumbers[nextGreen]][0])):
-        vehicle = vehicles[directionNumbers[nextGreen]][0][j]
-        if(vehicle.crossed==0):
-            vclass = vehicle.vehicleClass
-            # print(vclass)
-            noOfBikes += 1
-    for i in range(1,3):
-        for j in range(len(vehicles[directionNumbers[nextGreen]][i])):
-            vehicle = vehicles[directionNumbers[nextGreen]][i][j]
-            if(vehicle.crossed==0):
+    global currentGreen, nextGreen, signals
+
+    #os.system("say detecting vehicles, " + directionNumbers[(currentGreen + 1) % noOfSignals])
+
+    # Reset vehicle counts
+    noOfCars = noOfBuses = noOfTrucks = noOfRickshaws = noOfBikes = 0
+
+    # Count vehicles in the next direction
+    for lane in range(3):  # assuming 3 lanes per direction
+        for vehicle in vehicles[directionNumbers[nextGreen]][lane]:
+            if vehicle.crossed == 0:
                 vclass = vehicle.vehicleClass
-                # print(vclass)
-                if(vclass=='car'):
+                if vclass == 'car':
                     noOfCars += 1
-                elif(vclass=='bus'):
+                elif vclass == 'bus':
                     noOfBuses += 1
-                elif(vclass=='truck'):
+                elif vclass == 'truck':
                     noOfTrucks += 1
-                elif(vclass=='rickshaw'):
+                elif vclass == 'rickshaw':
                     noOfRickshaws += 1
-    # print(noOfCars)
-    greenTime = math.ceil(((noOfCars*carTime) + (noOfRickshaws*rickshawTime) + (noOfBuses*busTime) + (noOfTrucks*truckTime)+ (noOfBikes*bikeTime))/(noOfLanes+1))
-    # greenTime = math.ceil((noOfVehicles)/noOfLanes) 
-    print('Green Time: ',greenTime)
-    if(greenTime<defaultMinimum):
+                elif vclass == 'bike':
+                    noOfBikes += 1
+
+    # Compute time based on weighted vehicle count
+    greenTime = math.ceil(
+        ((noOfCars * carTime) +
+         (noOfRickshaws * rickshawTime) +
+         (noOfBuses * busTime) +
+         (noOfTrucks * truckTime) +
+         (noOfBikes * bikeTime)) / (noOfLanes + 1)
+    )
+
+    # Check if NEAT AI suggests an override
+    ai_green = get_neat_green_time()  # <- this should return an int or None
+    if ai_green is not None:
+        print(f"NEAT suggested green time: {ai_green}")
+        greenTime = ai_green
+
+    # Clamp green time
+    if greenTime < defaultMinimum:
         greenTime = defaultMinimum
-    elif(greenTime>defaultMaximum):
+    elif greenTime > defaultMaximum:
         greenTime = defaultMaximum
-    # greenTime = random.randint(15,50)
-    signals[(currentGreen+1)%(noOfSignals)].green = greenTime
-   
+
+    # Assign computed green time
+    signals[(currentGreen + 1) % noOfSignals].green = greenTime
+    print('Final Green Time:', greenTime)
+
 def repeat():
     global currentGreen, currentYellow, nextGreen
     while(signals[currentGreen].green>0):   # while the timer of current green signal is not zero
@@ -358,28 +363,49 @@ def repeat():
     repeat()     
 
 # Print the signal timers on cmd
-def printStatus():                                                                                           
-	for i in range(0, noOfSignals):
-		if(i==currentGreen):
-			if(currentYellow==0):
-				print(" GREEN TS",i+1,"-> r:",signals[i].red," y:",signals[i].yellow," g:",signals[i].green)
-			else:
-				print("YELLOW TS",i+1,"-> r:",signals[i].red," y:",signals[i].yellow," g:",signals[i].green)
-		else:
-			print("   RED TS",i+1,"-> r:",signals[i].red," y:",signals[i].yellow," g:",signals[i].green)
-	print()
+def printStatus():
+    for i in range(noOfSignals):
+        r = max(0, signals[i].red)
+        y = max(0, signals[i].yellow)
+        g = max(0, signals[i].green)
+        
+        if i == currentGreen:
+            if currentYellow == 0:
+                print(" GREEN TS", i+1, "-> r:", r, " y:", y, " g:", g)
+            else:
+                print("YELLOW TS", i+1, "-> r:", r, " y:", y, " g:", g)
+        else:
+            print("   RED TS", i+1, "-> r:", r, " y:", y, " g:", g)
+    print()
+
 
 # Update values of the signal timers after every second
+# Global or class-level flag (initialize somewhere before simulation starts)
+currentGreenChanged = True  # Initially True for the first green signal
+
 def updateValues():
-    for i in range(0, noOfSignals):
-        if(i==currentGreen):
-            if(currentYellow==0):
-                signals[i].green-=1
-                signals[i].totalGreenTime+=1
+    global currentGreen, currentYellow,currentGreenChanged  # Ensure we can modify the flag
+
+    for i in range(noOfSignals):
+        if i == currentGreen:
+            if currentYellow == 0:
+                # Only decrement green if it's already set (AI value is applied once)
+                if signals[i].green > 0:
+                    signals[i].green -= 1
+                    signals[i].totalGreenTime += 1
+                # If the signal just turned green, we leave green as is (AI will set it)
             else:
-                signals[i].yellow-=1
+                signals[i].yellow = max(0, signals[i].yellow - 1)
         else:
-            signals[i].red-=1
+            signals[i].red = max(0, signals[i].red - 1)
+
+    # Check if we need to switch to the next signal
+    if signals[currentGreen].green == 0 and currentYellow == 0:
+        currentYellow = 1  # Switch to yellow
+    elif currentYellow == 1 and signals[currentGreen].yellow == 0:
+        currentYellow = 0
+        currentGreen = (currentGreen + 1) % noOfSignals
+        currentGreenChanged = True  # <-- Set flag when new green starts
 
 # Generating vehicles in the simulation
 def generateVehicles():
@@ -425,91 +451,304 @@ def simulationTime():
             print('Total time passed: ',timeElapsed)
             print('No. of vehicles passed per unit time: ',(float(totalVehicles)/float(timeElapsed)))
             os._exit(1)
-    
 
-class Main:
-    thread4 = threading.Thread(name="simulationTime",target=simulationTime, args=()) 
-    thread4.daemon = True
-    thread4.start()
+# ===============================================================
+# =============== NEAT INTEGRATION SECTION ======================
+# ===============================================================
+import neat
+import pickle
+import sys
 
-    thread2 = threading.Thread(name="initialization",target=initialize, args=())    # initialization
-    thread2.daemon = True
-    thread2.start()
+# ---------- NEAT Evaluation Function ----------
+def eval_genomes(genomes, config):
+    """
+    Evaluate each genome's performance in the traffic simulation.
+    Each genome predicts a green time, and fitness depends on how
+    efficiently it clears vehicles from the intersection.
+    """
+    for genome_id, genome in genomes:
+        net = neat.nn.FeedForwardNetwork.create(genome, config)
 
-    # Colours 
-    black = (0, 0, 0)
-    white = (255, 255, 255)
+        # Input features (vehicle counts)
+        inputs = [
+            len(vehicles['right'][0]) + len(vehicles['right'][1]) + len(vehicles['right'][2]),
+            len(vehicles['down'][0]) + len(vehicles['down'][1]) + len(vehicles['down'][2]),
+            len(vehicles['left'][0]) + len(vehicles['left'][1]) + len(vehicles['left'][2]),
+            len(vehicles['up'][0]) + len(vehicles['up'][1]) + len(vehicles['up'][2])
+        ]
+        inputs = [count / 50 for count in inputs]
 
-    # Screensize 
-    screenWidth = 1400
-    screenHeight = 800
-    screenSize = (screenWidth, screenHeight)
 
-    # Setting background image i.e. image of intersection
-    background = pygame.image.load('first.png')
+        # Network output (predicted green time)
+        output = net.activate(inputs)
+        predicted_green = int(output[0] * defaultMaximum)
 
-    screen = pygame.display.set_mode(screenSize)
-    pygame.display.set_caption("SIMULATION")
+        # Clamp within safe range
+        predicted_green = max(defaultMinimum, min(defaultMaximum, predicted_green))
 
-    # Loading signal images and font
-    redSignal = pygame.image.load('images/signals/red.png')
-    yellowSignal = pygame.image.load('images/signals/yellow.png')
-    greenSignal = pygame.image.load('images/signals/green.png')
-    font = pygame.font.Font(None, 30)
+        # Simulate basic traffic clearance (you can replace with real-time logic later)
+        # Estimate how many vehicles could pass given this green time
+        estimated_cleared = (predicted_green / defaultMaximum) * (
+            noOfCars + noOfBikes + noOfBuses + noOfRickshaws + noOfTrucks
+        )
 
-    thread3 = threading.Thread(name="generateVehicles",target=generateVehicles, args=())    # Generating vehicles
-    thread3.daemon = True
-    thread3.start()
+        # Simple throughput vs waiting penalty
+        try:
+            throughput = sum(v['crossed'] for v in vehicles.values() if isinstance(v, dict))
+        except Exception:
+            throughput = estimated_cleared  # fallback if no detailed vehicle stats
 
-    while True:
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                sys.exit()
+        try:
+            waiting_penalty = sum(
+                len(v[lane]) for v in vehicles.values() if isinstance(v, dict) for lane in [0, 1, 2]
+            )
+        except Exception:
+            waiting_penalty = len(vehicles)  # fallback if structure simpler
 
-        screen.blit(background,(0,0))   # display background in simulation
-        for i in range(0,noOfSignals):  # display signal and set timer according to current status: green, yello, or red
-            if(i==currentGreen):
-                if(currentYellow==1):
-                    if(signals[i].yellow==0):
-                        signals[i].signalText = "STOP"
-                    else:
-                        signals[i].signalText = signals[i].yellow
-                    screen.blit(yellowSignal, signalCoods[i])
-                else:
-                    if(signals[i].green==0):
-                        signals[i].signalText = "SLOW"
-                    else:
-                        signals[i].signalText = signals[i].green
-                    screen.blit(greenSignal, signalCoods[i])
-            else:
-                if(signals[i].red<=10):
-                    if(signals[i].red==0):
-                        signals[i].signalText = "GO"
-                    else:
-                        signals[i].signalText = signals[i].red
-                else:
-                    signals[i].signalText = "---"
-                screen.blit(redSignal, signalCoods[i])
-        signalTexts = ["","","",""]
+        # Base fitness: reward clearing vehicles, penalize waiting
+        genome.fitness = max(1.0, throughput + estimated_cleared - 0.3 * waiting_penalty)
 
-        # display signal timer and vehicle count
-        for i in range(0,noOfSignals):  
-            signalTexts[i] = font.render(str(signals[i].signalText), True, white, black)
-            screen.blit(signalTexts[i],signalTimerCoods[i]) 
-            displayText = vehicles[directionNumbers[i]]['crossed']
-            vehicleCountTexts[i] = font.render(str(displayText), True, black, white)
-            screen.blit(vehicleCountTexts[i],vehicleCountCoods[i])
+        # ✅ Optional reinforcement-like feedback (from dynamic simulation)
+        try:
+            fitness = run_simulation(net)  # optional function returning performance score
+            genome.fitness = 0.5 * genome.fitness + 0.5 * fitness
+        except Exception as e:
+            print(f"[WARN] run_simulation failed for genome {genome_id}: {e}")
 
-        timeElapsedText = font.render(("Time Elapsed: "+str(timeElapsed)), True, black, white)
-        screen.blit(timeElapsedText,(1100,50))
+import random
 
-        # display the vehicles
-        for vehicle in simulation:  
-            screen.blit(vehicle.currentImage, [vehicle.x, vehicle.y])
-            # vehicle.render(screen)
-            vehicle.move()
-        pygame.display.update()
-
-Main()
-
+def run_simulation(net):
   
+    # Example: simulate how well the network might perform
+    # You can replace this with actual simulation logic later.
+    simulated_performance = random.uniform(0, 100)  # random fitness between 0–100
+
+    return simulated_performance
+
+# ---------- Run NEAT Training ----------
+def run_neat(config_path="config.txt", generations=10):
+    """
+    Run NEAT evolution for the specified number of generations.
+    """
+    config = neat.Config(
+        neat.DefaultGenome,
+        neat.DefaultReproduction,
+        neat.DefaultSpeciesSet,
+        neat.DefaultStagnation,
+        config_path
+    )
+
+    pop = neat.Population(config)
+    pop.add_reporter(neat.StdOutReporter(True))
+    stats = neat.StatisticsReporter()
+    pop.add_reporter(stats)
+
+    print("\n[🚦] Starting NEAT training...\n")
+    winner = pop.run(eval_genomes, generations)
+
+    with open("best_neat_model.pkl", "wb") as f:
+        pickle.dump(winner, f)
+    print("\n✅ NEAT training complete. Model saved as best_neat_model.pkl\n")
+
+
+# ---------- Load Trained NEAT Model ----------
+def get_neat_green_time():
+    """
+    Use the trained NEAT network to predict an adaptive green time.
+    """
+    try:
+        with open("best_neat_model.pkl", "rb") as f:
+            winner = pickle.load(f)
+    except FileNotFoundError:
+        print("[⚠️] NEAT model not trained yet — using rule-based timing.")
+        return None  # fallback to old method
+
+    config = neat.Config(
+        neat.DefaultGenome,
+        neat.DefaultReproduction,
+        neat.DefaultSpeciesSet,
+        neat.DefaultStagnation,
+        "config.txt"
+    )
+    net = neat.nn.FeedForwardNetwork.create(winner, config)
+
+    inputs = [noOfCars, noOfBikes, noOfBuses, noOfRickshaws, noOfTrucks,noOfLanes]
+    output = net.activate(inputs)
+    green_time = int(output[0] * defaultMaximum)
+    return max(defaultMinimum, min(defaultMaximum, green_time))
+
+
+import pygame
+import threading
+import sys
+class Main:
+    def __init__(self):
+        # --- Load trained NEAT model ---
+        try:
+            print("[🧠] Loading trained NEAT model: best_neat_model.pkl ...")
+            self.net = self.load_best_model()
+            print("[✅] Model loaded successfully. Using AI-controlled signals.")
+        except Exception as e:
+            print(f"[⚠️] Could not load trained model: {e}")
+            self.net = None  # fallback to normal timing if model not found
+
+        # --- Background threads ---
+        self.thread4 = threading.Thread(name="simulationTime", target=simulationTime, daemon=True)
+        self.thread4.start()
+
+        self.thread2 = threading.Thread(name="initialization", target=initialize, daemon=True)
+        self.thread2.start()
+
+        self.thread3 = threading.Thread(name="generateVehicles", target=generateVehicles, daemon=True)
+        self.thread3.start()
+
+        # --- Colours and screen setup ---
+        self.black = (0, 0, 0)
+        self.white = (255, 255, 255)
+        self.screenWidth, self.screenHeight = 1400, 800
+        self.screenSize = (self.screenWidth, self.screenHeight)
+
+        self.background = pygame.image.load("first.png")
+        self.screen = pygame.display.set_mode(self.screenSize)
+        pygame.display.set_caption("SIMULATION")
+
+        # --- Load assets ---
+        self.redSignal = pygame.image.load("images/signals/red.png")
+        self.yellowSignal = pygame.image.load("images/signals/yellow.png")
+        self.greenSignal = pygame.image.load("images/signals/green.png")
+        self.font = pygame.font.Font(None, 30)
+
+        # --- Input normalization caps (adjust these to realistic values) ---
+        self.max_counts = {
+            "cars": 50,
+            "bikes": 50,
+            "buses": 10,
+            "rickshaws": 20,
+            "trucks": 15,
+            "lanes": 8
+        }
+
+        
+       
+
+    # ------------------------------------------------------------------
+    def load_best_model(self):
+        """Load trained NEAT model from file."""
+        config = neat.Config(
+            neat.DefaultGenome,
+            neat.DefaultReproduction,
+            neat.DefaultSpeciesSet,
+            neat.DefaultStagnation,
+            "config.txt"
+        )
+        with open("best_neat_model.pkl", "rb") as f:
+            winner = pickle.load(f)
+        return neat.nn.FeedForwardNetwork.create(winner, config)
+
+    # ------------------------------------------------------------------
+    def run_simulation(self):
+        clock = pygame.time.Clock()
+        while True:
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    pygame.quit()
+                    sys.exit()
+
+            self.screen.blit(self.background, (0, 0))
+
+            # --- AI Adaptive Signal Control ---
+            global currentGreenChanged  # make sure we can modify the flag
+            if self.net and currentGreenChanged:
+                try:
+                    inputs = [
+                        noOfCars / self.max_counts["cars"],
+                        noOfBikes / self.max_counts["bikes"],
+                        noOfBuses / self.max_counts["buses"],
+                        noOfRickshaws / self.max_counts["rickshaws"],
+                        noOfTrucks / self.max_counts["trucks"],
+                        noOfLanes / self.max_counts["lanes"]
+                    ]
+                    inputs = [max(0.0, min(1.0, i)) for i in inputs]
+
+                    output = self.net.activate(inputs)
+                    raw_output = output[0]
+                    predicted_green = int(raw_output * defaultMaximum)
+                    predicted_green = max(defaultMinimum, min(defaultMaximum, predicted_green))
+                    
+                    # Only apply once when the signal first turns green
+                    signals[currentGreen].green = predicted_green
+                    currentGreenChanged = False  # <- important: reset flag so we don’t overwrite every frame
+                except Exception as e:
+                    print(f"[WARN] AI update failed: {e}")
+
+            # --- Draw signals ---
+            for i in range(noOfSignals):
+                if i == currentGreen:
+                    if currentYellow == 1:
+                        self.screen.blit(self.yellowSignal, signalCoods[i])
+                    else:
+                        self.screen.blit(self.greenSignal, signalCoods[i])
+                else:
+                    self.screen.blit(self.redSignal, signalCoods[i])
+
+            # --- Draw vehicles ---
+            for vehicle in simulation:
+                self.screen.blit(vehicle.currentImage, [vehicle.x, vehicle.y])
+                vehicle.move()
+
+            # --- Draw timers and text ---
+            for i in range(noOfSignals):
+                text = self.font.render(str(signals[i].green if i == currentGreen and currentYellow == 0 else signals[i].red), True, self.white)
+                self.screen.blit(text, signalTimerCoods[i])
+
+            pygame.display.update()
+            clock.tick(60)
+
+    def run(self):
+        clock = pygame.time.Clock()
+        running = True
+
+        while running:
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    pygame.quit()
+                    sys.exit()
+
+            # Draw background
+            self.screen.blit(self.background, (0, 0))
+
+            # Draw signals
+            for i in range(noOfSignals):
+                if i == currentGreen:
+                    if currentYellow == 1:
+                        self.screen.blit(self.yellowSignal, signalCoods[i])
+                    else:
+                        self.screen.blit(self.greenSignal, signalCoods[i])
+                else:
+                    self.screen.blit(self.redSignal, signalCoods[i])
+
+            # Draw vehicles
+            for vehicle_group in simulation:
+                vehicle_group.move()
+                vehicle_group.render(self.screen)
+
+            # Draw timers
+            for i in range(noOfSignals):
+                timer_text = self.font.render(str(signals[i].green if i == currentGreen and currentYellow == 0 else signals[i].red), True, self.white)
+                self.screen.blit(timer_text, signalTimerCoods[i])
+
+            # Update display
+            pygame.display.update()
+            clock.tick(60)  # limit to 60 FPS
+
+
+           
+
+# ---------- Optional CLI helper ----------
+if __name__ == "__main__":
+    if "--train" in sys.argv:
+        run_neat("config.txt", generations=20)
+    else:
+        pygame.init()
+        main = Main()
+        main.run_simulation()
